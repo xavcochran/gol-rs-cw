@@ -26,6 +26,12 @@ pub fn distributor(
     let io_idle = channels.io_idle.take().unwrap();
 
     // TODO: Create a 2D vector to store the world.
+    
+    // initialise the world which is (height*bytes)x(width*bytes) in capacity
+    let mut world: Vec<Vec<u8>> = Vec::with_capacity(params.image_height*params.image_width);
+    for col in 0..params.image_width {
+        world[col] = Vec::with_capacity(params.image_width)
+    }
 
     let turn = 0;
     events.send(
