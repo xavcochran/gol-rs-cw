@@ -7,12 +7,14 @@ use indexmap::IndexSet;
 // use std::{cell, fmt};
 // use std::{fs::read, vec};
 use tokio::{io::AsyncReadExt, net::TcpStream};
+
+use super::coordinates::Coordinates;
 // originally used standard hashset but doesnt have order
 // index set retains order of insertion
 // this increases decode time by about 30-40% but i believe it is a worthy tradeoff
 
 pub const BYTE: usize = 8;
-const HEADER_SIZE_BYTES: usize = 8;
+const HEADER_SIZE_BYTES: usize = 11;
 const VERSION: usize = 0;
 const FUNCTION_CALL: usize = 1;
 const MESSAGE_ID: usize = 2;
@@ -35,35 +37,7 @@ impl fmt::Display for DecodeError {
     }
 }
 
-pub struct Coordinates {}
 
-impl Coordinates {
-    /// returns `(coordinate_length, offset)`
-    ///
-    /// `coordinate_length` is the length of the combined `xy` coordinate.
-    /// - For 16x16 this will be 8 bits.
-    /// - For 64x64 this will be 12 bits.
-    /// - For 512x512 this will be 18 bits.
-    ///
-    /// `offset` is the remaining number of bits in the `u32` type that are unused by the coordinate
-    /// - For 16x16 this will be 24 bits.
-    /// - For 64x64 this will be 20 bits.
-    /// - For 512x512 this will be 14 bits.
-    pub fn calc_coord_len_and_offset(image_size: u32) -> (u32, u32) {
-        let coordinate_length = || -> u32 {
-            let mask: u32 = 1;
-            let mut size = 0;
-            for i in 0..32 as u32 {
-                if image_size & (mask << i) > 0 {
-                    size = i;
-                }
-            }
-            return size * 2;
-        }();
-        let offset = 32 - coordinate_length;
-        return (coordinate_length, offset);
-    }
-}
 
 #[derive(Debug, Clone)]
 struct Header {
@@ -124,6 +98,7 @@ impl Packet {
         let mut bit_count = 7;
         let size = self.header.length as usize;
         let mut cells = IndexSet::with_capacity(size);
+        let mask: u32 = (1 << coordinate_length) - 1;
 
         let coordinate_length_usize: usize = coordinate_length as usize;
         for byte in data {
@@ -132,7 +107,7 @@ impl Packet {
 
             // while there is no space to shift, process first 18 bits
             while bit_count >= 24 {
-                let extracted_value = (buffer & 0xFFFFC000) >> offset; // get first 18 bits then shift to right hand side
+                let extracted_value = (buffer & mask) >> offset; // get first 18 bits then shift to right hand side
 
                 cells.insert(extracted_value);
 
@@ -144,36 +119,65 @@ impl Packet {
     }
 
     pub async fn decode(&mut self, mut stream: TcpStream) -> Result<IndexSet<u32>, DecodeError> {
-        let mut buf = BytesMut::with_capacity(10);
+        let mut buf = BytesMut::with_capacity(HEADER_SIZE_BYTES);
 
         let (coordinate_length, offset) =
             Coordinates::calc_coord_len_and_offset(self.header.image_size as u32);
 
         match stream.read_buf(&mut buf).await {
             Ok(0) => {
-                return Ok(IndexSet::new());
+                return Err(DecodeError::Other(format!(
+                    "Error Reading from stream, read 0 bytes"
+                )));
             }
             Ok(n) => {
-                if n != 10 {
+                if n != 11 {
                     return Err(DecodeError::Other(format!(
                         "Length missmatch, expected headersize of 10, got {}",
                         n
                     )));
                 } else {
                     self.decode_header(&buf);
-                    return Ok(IndexSet::new());
+                    let mut payload_buf = BytesMut::with_capacity(self.header.length as usize);
+                    match stream.read_buf(&mut payload_buf).await {
+                        Ok(0) => {
+                            return Err(DecodeError::Other(format!(
+                                "Error Reading from stream, read 0 bytes"
+                            )));
+                        }
+                        Ok(n) => {
+                            if n != self.header.length as usize {
+                                return Err(DecodeError::Other(format!(
+                                    "Length missmatch, expected headersize of 10, got {}",
+                                    n
+                                )));
+                            } else {
+                                return Ok(self.decode_payload(&buf, coordinate_length, offset));
+                            }
+                        }
+                        Err(e) => {
+                            return Err(DecodeError::Other(format!(
+                                "Failed to read payload from port; err = {:?}",
+                                e
+                            )));
+                        }
+                    }
                 }
             }
             Err(e) => {
                 return Err(DecodeError::Other(format!(
-                    "Failed to read from port; err = {:?}",
+                    "Failed to read header from port; err = {:?}",
                     e
                 )));
             }
         }
     }
 
-    pub fn encode_payload_from_set(&self, cells: IndexSet<u32>, coordinate_length: usize) -> Vec<u8> {
+    pub fn encode_payload_from_set(
+        &self,
+        cells: IndexSet<u32>,
+        coordinate_length: usize,
+    ) -> Vec<u8> {
         let mut buffer: u32 = 0;
         let mut bit_count: usize = coordinate_length - 1;
         let mask: u32 = 0xFF000000;
@@ -222,4 +226,8 @@ impl Packet {
         }
         data
     }
+
+    pub fn encode_header(&self, cells_length, )
+
+    pub fn encode(&self, cells: IndexSet<u32>, coordinate_length: u32) {}
 }
