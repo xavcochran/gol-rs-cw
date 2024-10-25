@@ -1,3 +1,5 @@
+use indexmap::IndexSet;
+
 pub struct Params {
     pub turns: u32,
     pub threads: u32,
@@ -10,18 +12,28 @@ pub struct Subscription {
     pub function: String,
 }
 
-pub struct Broker{
-    
+pub struct StatusReport {
+	pub message: String,
+}
+pub struct BrokerRequest {
+    pub params: Params,
+    pub world: IndexSet<u32>
 }
 
-// using static because string literal will live for entire program duration
-impl Broker {
-    pub const SUBSCRIBE: &'static str = "Broker.Subscribe";
-    pub const PUBLISH: &'static str = "Broker.Publish";
-    pub const PROCESS_GOL: &'static str = "Broker.ProcessGol";
-    pub const COUNT_ALIVE: &'static str = "Broker.CountAliveCells";
-    pub const QUIT: &'static str = "Broker.Quit";
-    pub const SCREENSHOT: &'static str = "Broker.Screenshot";
-    pub const PAUSE: &'static str = "Broker.Pause";
-    pub const KILL: &'static str = "Broker.Kill";
+pub struct BrokerResponse {
+    pub world: IndexSet<u32>,
+    pub current_turn: u32,
+    pub alive_count: u32,
+    pub paused: bool
+}
+
+pub struct ProcessSliceArgs {
+    pub params: Params,
+    pub y1: u32,
+    pub y2: u32,
+    pub alive_cells: IndexSet<u32>,
+}
+
+pub struct ProcessSliceResponse {
+    pub alive_cells: IndexSet<u32>,
 }
