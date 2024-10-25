@@ -37,3 +37,9 @@ pub struct ProcessSliceArgs {
 pub struct ProcessSliceResponse {
     pub alive_cells: IndexSet<u32>,
 }
+
+pub struct PacketParams {
+    pub fn_call_id: u8,
+    pub msg_id: u16,
+    pub image_size: u16,
+}

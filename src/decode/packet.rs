@@ -13,6 +13,8 @@ use tokio::{
     net::TcpStream,
 };
 
+use crate::stubs::stubs::{PacketParams, Params};
+
 use super::{
     coordinates::Coordinates,
     function_call::{self, FunctionCall},
@@ -23,6 +25,7 @@ use super::{
 
 pub const BYTE: usize = 8;
 pub const BYTE_F64: f64 = 8.0;
+pub const CURRENT_VERSION: u8 = 1;
 const HEADER_SIZE_BYTES: usize = 11;
 const VERSION: usize = 0;
 const FUNCTION_CALL: usize = 1;
@@ -59,7 +62,7 @@ pub struct Header {
 impl Header {
     pub fn new() -> Self {
         Self {
-            version: 0,
+            version: 1,
             fn_call: 0,
             msg_id: 0,
             image_size: 0,
@@ -71,12 +74,18 @@ impl Header {
 
 #[derive(Debug, Clone)]
 pub struct Packet {
-    header: Header,
 }
 
 impl Packet {
-    fn decode_header(&mut self, data: &[u8]) {
-        self.header = Header {
+    pub fn new() -> Self {
+        Self{   
+
+        }
+    }
+    
+
+    fn decode_header(&mut self, data: &[u8]) -> Header {
+        Header {
             version: data[VERSION],       // first byte
             fn_call: data[FUNCTION_CALL], // second byte
             msg_id: ((data[MESSAGE_ID] as u16) << BYTE | (data[MESSAGE_ID + 1] as u16)), // 3rd & 4th byte
@@ -127,16 +136,16 @@ impl Packet {
     }
 
     /// Reads data from TCP stream directly into set of alive cells
-    pub async fn read(&mut self, client: &mut TcpStream) -> Result<IndexSet<u32>, DecodeError> {
+    pub async fn read(&mut self, client: &mut TcpStream, params: PacketParams) -> Result<IndexSet<u32>, DecodeError> {
         // initialses buffer for header read
         let mut header_buf = BytesMut::with_capacity(HEADER_SIZE_BYTES);
 
         // calculates coordinate length and offset based on image size
         let (coordinate_length, offset) =
-            Coordinates::calc_coord_len_and_offset(self.header.image_size as u32);
+            Coordinates::calc_coord_len_and_offset(params.image_size as u32);
 
         // reads header by reading exactly HEADER_SIZE number of bytes
-        match client.read_buf(&mut header_buf).await {
+        let header = match client.read_buf(&mut header_buf).await {
             Ok(0) => {
                 return Err(DecodeError::Other(format!(
                     "Error Reading from client, read 0 bytes"
@@ -150,7 +159,7 @@ impl Packet {
                     )));
                 } else {
                     // if HEADER_SIZE number of bytes have been read, then decode the header
-                    self.decode_header(&header_buf);
+                    self.decode_header(&header_buf)
                 }
             }
             Err(e) => {
@@ -159,10 +168,10 @@ impl Packet {
                     e
                 )));
             }
-        }
+        };
 
         // initialse payload buffer to be read into
-        let mut payload_buf = BytesMut::with_capacity(self.header.length as usize);
+        let mut payload_buf = BytesMut::with_capacity(header.length as usize);
 
         let mut bytes_read = 0;
         loop {
@@ -175,7 +184,7 @@ impl Packet {
                 Ok(n) => {
                     bytes_read += n;
                     // if all the bytes have been read then break from the loop and process them
-                    if bytes_read >= self.header.length as usize {
+                    if bytes_read >= header.length as usize {
                         break;
                     }
                 }
@@ -190,7 +199,7 @@ impl Packet {
         // initialise IndexSet for cells
         // initialising hear to decouple from decode_payload function for easy future modification
         // is currently initialised after the stream to avoid allocation time in the case of failure as index set allocation takes O(n)
-        let mut cells = IndexSet::with_capacity(self.header.length as usize);
+        let mut cells = IndexSet::with_capacity(header.length as usize);
 
         // decode the payload
         self.decode_payload(&mut cells, &payload_buf, coordinate_length, offset);
@@ -256,19 +265,19 @@ impl Packet {
     /// Computed checksum here to avoid having to pass around and get out all this data in a separate function.
     ///
     /// Note that `message length` = `payload length` + `header length`
-    pub fn encode_header(&self, message_length: u32, fn_call_id: u8, sum: &mut u32) -> Vec<u8> {
+    pub fn encode_header(&self, params: PacketParams, message_length: u32, sum: &mut u32) -> Vec<u8> {
         let mut data = Vec::with_capacity(HEADER_SIZE_BYTES);
 
-        data.push(self.header.version);
-        data.push(fn_call_id);
-        data.push_u16_to_u8s(self.header.msg_id);
-        data.push_u16_to_u8s(self.header.image_size);
+        data.push(CURRENT_VERSION);
+        data.push(params.fn_call_id);
+        data.push_u16_to_u8s(params.msg_id);
+        data.push_u16_to_u8s(params.image_size);
         data.push_u32_to_u8s(message_length);
 
-        self.ones_complement_sum(sum, self.header.version as u16);
-        self.ones_complement_sum(sum, fn_call_id as u16);
-        self.ones_complement_sum(sum, self.header.msg_id);
-        self.ones_complement_sum(sum, self.header.image_size);
+        self.ones_complement_sum(sum, CURRENT_VERSION as u16);
+        self.ones_complement_sum(sum, params.fn_call_id as u16);
+        self.ones_complement_sum(sum, params.msg_id);
+        self.ones_complement_sum(sum, params.image_size);
         self.ones_complement_sum(sum, (message_length >> 16) as u16);
         self.ones_complement_sum(sum, message_length as u16);
         return data;
@@ -280,11 +289,11 @@ impl Packet {
     pub async fn write_cells_from_set(
         &self,
         client: &mut TcpStream,
+        params: PacketParams,
         cells: IndexSet<u32>,
-        function_call_id: u8,
     ) -> Result<(), DecodeError> {
         let (coordinate_length, _) =
-            Coordinates::calc_coord_len_and_offset(self.header.image_size as u32);
+            Coordinates::calc_coord_len_and_offset(params.image_size as u32);
 
         // payload_length is length of alivecells in bytes + header size in bytes
         let payload = self.encode_payload_from_set(cells, coordinate_length as usize);
@@ -292,7 +301,7 @@ impl Packet {
         let message_length = payload.len() as u32 + HEADER_SIZE_BYTES as u32;
         let mut sum: u32 = 0;
 
-        let mut header = self.encode_header(message_length, function_call_id, &mut sum);
+        let mut header = self.encode_header(params, message_length, &mut sum);
 
         // sum up contents of payload
         // could combine into encoding but doesnt increase runtime apart from increasing constant factor

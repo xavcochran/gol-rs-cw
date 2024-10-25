@@ -1,8 +1,10 @@
 use crate::decode::function_call::FunctionCall;
+use crate::decode::packet::{Packet, CURRENT_VERSION};
 use crate::decode::rpc::{BrokerRpc, Rpc, RpcError, SubscriptionRpc};
 use crate::stubs::stubs::{
-    BrokerRequest, BrokerResponse, ProcessSliceArgs, StatusReport, Subscription,
+    BrokerRequest, BrokerResponse, PacketParams, ProcessSliceArgs, StatusReport, Subscription
 };
+use crate::worker;
 use core::fmt;
 
 use flume::{Receiver, Sender};
@@ -161,36 +163,51 @@ impl Broker {
 
 // queue slices to job channels
 // workers consume jobs
-fn run_jobs(b: &Broker, client: &TcpStream, jobs: Jobs) {
+fn run_jobs(b: &Broker, mut client: TcpStream, jobs: Jobs) {
     loop {
+        // don't think we need to use tokio::select! here as there is only one thread we are wating on
         match jobs.job_chan_rx.recv() {
             Ok(job) => {
-                worker_request(b, client, job.args, job.return_chan_tx);
+                // TODO: create header based on protocol md. 
+                // then encode payload data
+                // then send data to tcp stream
+                // await response and set down response channel
+                worker_process_slice_request(b, &mut client, job.args, job.return_chan_tx);
             }
             Err(e) => {}
         }
     }
 }
 
-// remove lifetimes here if problems come up
 
-fn worker_request(
+async fn worker_process_slice_request(
     b: &Broker,
-    client: &TcpStream,
+    client: &mut TcpStream,
     args: ProcessSliceArgs,
     response_channel: Sender<IndexSet<u32>>,
-) {
-    // TODO: create header based on protocol md. I think create packer header struct then encode it
-    // then encode payload data
-    // then send data to tcp stream
-    // await response and set down response channel
+) { 
+    let packet = Packet::new();
+    let params = PacketParams {
+        fn_call_id: FunctionCall::PROCESS_SLICE,
+        msg_id: 0, // TODO : implement msg ID => could implement in encode header function
+        image_size: args.params.image_width as u16,
+    };
+    // TODO: implement capacity
+    let cells = IndexSet::new();
+
+    match packet.write_cells_from_set(client, params, cells).await {
+        // if result is successful then wait on channel some how for response 
+        // each worker has corresponding message channel. 
+        // when reader thread recieves message, it sends message to corresponding thread (using hash map)
+        
+        Ok(_) => {},
+        Err(e) => {}
+    };
 }
 
 fn calculate_alive_cells(world: &IndexSet<u32>) -> usize {
     world.len()
 }
-
-
 
 #[tokio::main]
 pub async fn main() -> Result<(), BrokerErr> {
@@ -216,11 +233,14 @@ pub async fn main() -> Result<(), BrokerErr> {
     // listens for connections and gets them waiting on new jobs once successfully connected
     match ln.accept().await {
         Ok((client, socket_address)) => {
-            println!("Successfully accepted connection on port {}", socket_address);
+            println!(
+                "Successfully accepted connection on port {}",
+                socket_address
+            );
 
             // spawns green thread for newly connected worker
             tokio::spawn(async move {
-                run_jobs(&broker, &client, jobs);
+                run_jobs(&broker, client, jobs);
             });
         }
         Err(e) => {
