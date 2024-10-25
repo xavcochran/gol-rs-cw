@@ -1,12 +1,19 @@
 use indexmap::IndexSet;
 pub trait Cell {
-    fn neighbours(&self, index: usize, image_size: u32) -> usize;
+    /// Returns the total number of alive neighbours for a given cell
+    fn neighbours(&self, xy: u32, image_size: u32) -> Option<usize>;
 }
 
 impl Cell for IndexSet<u32> {
-    fn neighbours(&self, index: usize, image_size: u32) -> usize {
+    fn neighbours(&self, xy: u32, image_size: u32) -> Option<usize> {
         let mut live_neighbours = 0;
-        let xy = self.get_index(index).unwrap();
+
+        // DONT NEED BECAUSE WANT TO PASS **EVERY** COORDINATE IN SLICE (world) RATHER THAN JUST LIVE CELLS
+        // pattern match instead of unwrap to avoid panicking if requested value is not in IndexSet
+        // let xy = match self.get_index(index) {
+        //     Some(coordinate) => coordinate,
+        //     None => return None,
+        // };
 
         let neighbour_positions = vec![
             (xy + 512) % image_size, // right
@@ -25,6 +32,6 @@ impl Cell for IndexSet<u32> {
             }
         }
 
-        live_neighbours
+        Some(live_neighbours)
     }
 }

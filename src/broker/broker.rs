@@ -85,7 +85,7 @@ impl Broker {
             .register::<BrokerRpc, _, _>(FunctionCall::PAUSE, Self::pause);
     }
 
-    pub async fn subscribe<'a>(request: Subscription) -> Result<StatusReport, RpcError> {
+    pub async fn subscribe(request: Subscription) -> Result<StatusReport, RpcError> {
         // create tcp connection with worker
         let message: String;
         let client = match net::TcpStream::connect("127.0.0.1:8030").await {
@@ -110,7 +110,7 @@ impl Broker {
         };
         // start running runJobs with client connection
 
-        Ok(StatusReport { message: message })
+        Ok(StatusReport { message })
     }
 
     pub async fn process_gol(request: BrokerRequest) -> Result<BrokerResponse, RpcError> {
@@ -190,21 +190,46 @@ fn calculate_alive_cells(world: &IndexSet<u32>) -> usize {
     world.len()
 }
 
+
+
+#[tokio::main]
 pub async fn main() -> Result<(), BrokerErr> {
-    let brokerAddress = "127.0.0.1:8030";
+    let broker_address = "127.0.0.1:8030";
 
     // broker with functions registered
     let broker = Broker::new();
 
+    // creates jobs struct for up to 16 workers
+    let jobs = Jobs::new(16);
+
     // create listener
-    let ln = match net::TcpListener::bind(brokerAddress).await {
+    let ln = match net::TcpListener::bind(broker_address).await {
         Ok(ln) => ln,
         Err(e) => {
             return Err(BrokerErr::ConnectionError(
-                format!("couldn't create listener on port {}!", brokerAddress),
+                format!("couldn't create listener on port {}!", broker_address),
                 e,
             ))
         }
     };
+
+    // listens for connections and gets them waiting on new jobs once successfully connected
+    match ln.accept().await {
+        Ok((client, socket_address)) => {
+            println!("Successfully accepted connection on port {}", socket_address);
+
+            // spawns green thread for newly connected worker
+            tokio::spawn(async move {
+                run_jobs(&broker, &client, jobs);
+            });
+        }
+        Err(e) => {
+            return Err(BrokerErr::ConnectionError(
+                format!("couldn't accept listener on port {}!", broker_address),
+                e,
+            ))
+        }
+    };
+
     Ok(())
 }
