@@ -1,5 +1,7 @@
 use indexmap::IndexSet;
 
+use crate::broker::broker::Jobs;
+
 pub struct Params {
     pub turns: u32,
     pub threads: u32,
@@ -10,6 +12,7 @@ pub struct Params {
 pub struct Subscription {
     pub worker_ip_address: String,
     pub function: String,
+    pub jobs: Jobs,
 }
 
 pub struct StatusReport {

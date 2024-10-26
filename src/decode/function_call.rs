@@ -20,6 +20,20 @@ impl FunctionCall {
     pub const SCREENSHOT: u8 = 13;
     pub const QUIT: u8 = 14;
     pub const KILL: u8 = 15;
+}
 
-    
+#[derive(Debug, Clone)]
+pub enum CallType {
+    Default,
+    Rpc,
+}
+
+impl From<u8> for CallType {
+    fn from(value: u8) -> Self {
+        match value {
+            _ if value == CallType::Default as u8 => CallType::Default,
+            _ if value == CallType::Rpc as u8 => CallType::Rpc,
+            _ => CallType::Default,
+        }
+    }
 }

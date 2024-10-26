@@ -84,7 +84,7 @@ impl Rpc {
 
     /// Fetches function pointer from hashmap using function id.
     /// Returns rpc error with error if not found or with error from rpc call itself
-    pub async fn dispatch<T: ValidRpcTypes + Send + 'static>(
+    pub async fn handle_request<T: ValidRpcTypes + Send + 'static>(
         &self,
         call: u8,
         input: T::Input,
@@ -94,7 +94,7 @@ impl Rpc {
             // gets function from map
             .get(&call)
             //
-            // checks that function is of expected type with correct input types e.g. if subscribe function is called it should only have Subscribtion and Status report types
+            // checks that function is of expected type with correct input types e.g. if subscribe function is called it should only have Subscribtion as input and Status report as output
             .and_then(|handler| handler.downcast_ref::<Box<dyn Handler<T> + Send + Sync>>())
             //
             // checks that function is valid

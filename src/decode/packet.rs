@@ -17,7 +17,7 @@ use crate::stubs::stubs::{PacketParams, Params};
 
 use super::{
     coordinates::Coordinates,
-    function_call::{self, FunctionCall},
+    function_call::{self, CallType, FunctionCall},
 };
 // originally used standard hashset but doesnt have order
 // index set retains order of insertion
@@ -28,6 +28,7 @@ pub const BYTE_F64: f64 = 8.0;
 pub const CURRENT_VERSION: u8 = 1;
 const HEADER_SIZE_BYTES: usize = 11;
 const VERSION: usize = 0;
+const CALL_TYPE: usize = 0;
 const FUNCTION_CALL: usize = 1;
 const MESSAGE_ID: usize = 2;
 const IMAGE_SIZE: usize = 4;
@@ -51,19 +52,21 @@ impl fmt::Display for DecodeError {
 
 #[derive(Debug, Clone)]
 pub struct Header {
-    version: u8,
-    fn_call: u8,
-    msg_id: u16,
-    image_size: u16,
-    length: u32,
-    checksum: u16,
+    pub version: u8,
+    pub call_type: CallType,
+    pub fn_call_id: u8,
+    pub msg_id: u16,
+    pub image_size: u16,
+    pub length: u32,
+    pub checksum: u16,
 }
 
 impl Header {
     pub fn new() -> Self {
         Self {
             version: 1,
-            fn_call: 0,
+            call_type: CallType::Default,
+            fn_call_id: 0,
             msg_id: 0,
             image_size: 0,
             length: 0,
@@ -86,8 +89,9 @@ impl Packet {
 
     fn decode_header(&mut self, data: &[u8]) -> Header {
         Header {
-            version: data[VERSION],       // first byte
-            fn_call: data[FUNCTION_CALL], // second byte
+            version: data[VERSION & 0xF0],       // first 4 bi5s
+            call_type: CallType::from(data[CALL_TYPE & 0xF]),
+            fn_call_id: data[FUNCTION_CALL], // second byte
             msg_id: ((data[MESSAGE_ID] as u16) << BYTE | (data[MESSAGE_ID + 1] as u16)), // 3rd & 4th byte
             image_size: ((data[IMAGE_SIZE] as u16) << BYTE | (data[IMAGE_SIZE + 1] as u16)), // 5th & 6th byte
             // 7th -> 10th byte
@@ -133,6 +137,38 @@ impl Packet {
                 bit_count -= coordinate_length_usize; // decrease bit count to account for bits just extracted
             }
         }
+    }
+
+    pub async fn read_header(&mut self, client: &mut TcpStream) -> Result<Header, DecodeError> {
+         // initialses buffer for header read
+         let mut header_buf = BytesMut::with_capacity(HEADER_SIZE_BYTES);
+
+         // reads header by reading exactly HEADER_SIZE number of bytes
+         match client.read_buf(&mut header_buf).await {
+             Ok(0) => {
+                 return Err(DecodeError::Other(format!(
+                     "Error Reading from client, read 0 bytes"
+                 )));
+             }
+             Ok(n) => {
+                 if n != HEADER_SIZE_BYTES {
+                     return Err(DecodeError::Other(format!(
+                         "Length missmatch, expected headersize of 10, got {}",
+                         n
+                     )));
+                 } else {
+                     // if HEADER_SIZE number of bytes have been read, then decode the header
+                     Ok(self.decode_header(&header_buf))
+                 }
+             }
+             Err(e) => {
+                 return Err(DecodeError::Other(format!(
+                     "Failed to read header from port; err = {:?}",
+                     e
+                 )));
+             }
+         }
+
     }
 
     /// Reads data from TCP stream directly into set of alive cells
